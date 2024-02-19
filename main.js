@@ -18,7 +18,8 @@ document.onpaste = e => {
 async function process(newFiles) {
   for (const file of newFiles) {
     files.push(file)
-    file.overlap = 0
+    file.overlapX = 0
+    file.overlapY = 0
     file.url = URL.createObjectURL(file)
     file.image = await load(file.url)
     file.image.file = file
@@ -34,24 +35,53 @@ async function load(url) {
   })
 }
 
+function timer(name) {
+  const now = performance.now()
+  const t = now - timer.start
+  timer.start = now
+  if (name) {
+    console.log('timer', name, t)
+    return t
+  }
+}
+
+function positionAccumulator({x=0, y=0, w=0, h=0}, image) {
+  if (image.file.nl) {
+    x = 0
+    y = h    
+  }
+  const px = x - image.file.overlapX
+  const py = y - image.file.overlapY
+  w = Math.max(px + image.width, w)
+  h = Math.max(py + image.height, h)
+  x = px + image.width
+  y = py
+  return {x, y, w, h, px, py}
+}
+
 async function merge(files) {
   const first = !merge.current
   const current = merge.current = {}
   await new Promise(resolve=>setTimeout(resolve, 100));
   if (!first && current != merge.current) return merge.last
   const images = files.map(file => file.image)
-  const width = images.reduce((r, image) => r - image.file.overlap + image.width, 0)
-  const height = Math.max(0, ...images.map(image => image.height))
+  const {w: width, h: height} = images.reduce(positionAccumulator, {})
+  console.log(width, height)
+  timer()
   const c = new OffscreenCanvas(width || 1, height || 1)
   const cc = c.getContext('2d')
   images.reduce((r, image) => {
-    cc.drawImage(image, r - image.file.overlap, 0)
-    return r - image.file.overlap + image.width
-  }, 0)
+    r = positionAccumulator(r, image)
+    cc.drawImage(image, r.px, r.py)
+    return r
+  }, {})
+  //timer('draw')
   const blob = await c.convertToBlob({type: 'image/png'})
+  //timer('blob')
   if (!first && current != merge.current) return merge.last
   if (merge.last) URL.revokeObjectURL(merge.last)
   const result = URL.createObjectURL(blob)
+  //timer('url')
   merge.last = result
   merge.current = null
   return result
@@ -88,31 +118,57 @@ async function update() {
           verticalAlign: 'top',
         },
       }),
-      h('input', {
-        style: 'width: 4em',
-        type: 'number',
-        value: file.overlap,
-        oninput: e=> {
-          file.overlap=e.currentTarget.value
-          updateResult()
-        },
-      }),
-      i > 0 && h('button', {
-        onclick: e=> {
-          const prev = files[i-1]
-          let bestOverlap, bestDeltaE = Infinity
-          for (let overlap = 1; overlap <= prev.image.width; overlap++) {
-            const testDeltaE = deltaE(prev.image, file.image, overlap)
-            if (testDeltaE < bestDeltaE) {
-              bestDeltaE = testDeltaE
-              bestOverlap = overlap
+      h('div',{style:'display:inline-block;vertical-align:top'},[
+        'New Line:',
+        h('input', {
+          type: 'checkbox',
+          checked: file.nl,
+          oninput: e=> {
+            file.nl=e.currentTarget.checked
+            updateResult()
+          },
+        }),
+        h('br'),
+        'Overlap X:',
+        h('input', {
+          style: 'width: 4em',
+          type: 'number',
+          value: file.overlapX,
+          oninput: e=> {
+            file.overlapX=e.currentTarget.value
+            updateResult()
+          },
+        }),
+        h('br'),
+        'Overlap Y:',
+        h('input', {
+          style: 'width: 4em',
+          type: 'number',
+          value: file.overlapY,
+          oninput: e=> {
+            file.overlapY=e.currentTarget.value
+            updateResult()
+          },
+        }),
+        h('br'),
+        i > 0 && h('button', {
+          onclick: e=> {
+            const prev = files[i-1]
+            let bestOverlap, bestDeltaE = Infinity
+            for (let overlap = 1; overlap <= prev.image.width; overlap++) {
+              const testDeltaE = deltaE(prev.image, file.image, overlap)
+              if (testDeltaE < bestDeltaE) {
+                bestDeltaE = testDeltaE
+                bestOverlap = overlap
+              }
             }
-          }
-          console.log('dE', bestDeltaE)
-          file.overlap = bestOverlap
-          update()
-        },
-      }, 'Auto'),
+            console.log('dE', bestDeltaE)
+            file.overlapX = bestOverlap
+            update()
+          },
+        }, 'Auto Overlap X'),
+      
+      ]),
       h('div', {
         style: {
           display: 'inline-block',
